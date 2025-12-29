@@ -1,8 +1,8 @@
 # SJTU-Annual-Eat
 
-思源码消费年度总结！[点击查看](https://皮革兔.爱来自世界.top)
+思源码消费年度总结，网页版本。
 
-把 [Milvoid/SJTU-Annual-Eat](https://github.com/Milvoid/SJTU-Annual-Eat) 使用 TypeScript 重写，并部署到了 CloudFlare Worker 上，点开网站就能用了。
+把 [Milvoid/SJTU-Annual-Eat](https://github.com/Milvoid/SJTU-Annual-Eat) 使用 TypeScript 重写，可以用于部署到 CloudFlare Worker 上。
 
 ## 部署
 
