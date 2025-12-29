@@ -282,6 +282,14 @@
 	</div>
 
 	<script>
+		// OAuth 配置（硬编码 clientID）
+		const OAUTH_CONFIG = {
+			authorizationURL: 'https://jaccount.sjtu.edu.cn/oauth2/authorize',
+			redirectURI: 'https://net.sjtu.edu.cn',
+			// 硬编码的 clientID，需要根据实际情况修改
+			clientID: 'KfiGI09p9N4cPSHn5V7p'
+		};
+
 		// 设置默认日期（本年1月1日）
 		const today = new Date();
 		const currentYear = today.getFullYear();
@@ -291,21 +299,26 @@
 		document.getElementById('startDate').valueAsDate = defaultStart;
 		document.getElementById('endDate').value = today.toLocaleDateString('en-CA');
 
+		// 生成授权 URL
+		function generateAuthURL() {
+			const state = crypto.randomUUID();
+			const params = new URLSearchParams({
+				response_type: 'code',
+				client_id: OAUTH_CONFIG.clientID,
+				redirect_uri: OAUTH_CONFIG.redirectURI,
+				scope: '',
+				state: state,
+			});
+			const authURL = `${OAUTH_CONFIG.authorizationURL}?${params.toString()}`;
+			sessionStorage.setItem('oauthState', state);
+			return authURL;
+		}
+
 		// 登录按钮 - 打开授权链接
-		document.getElementById('loginBtn').addEventListener('click', async () => {
-			try {
-				const response = await fetch('/api/auth/authorize');
-				const data = await response.json();
-				if (data.url) {
-					// 在新窗口打开授权链接
-					window.open(data.url, '_blank');
-					// showStatus('授权链接已在新窗口打开，请登录后复制完整链接并粘贴到下方输入框。', 'success');
-				} else {
-					showStatus('获取授权链接失败', 'error');
-				}
-			} catch (error) {
-				showStatus('请求失败: ' + error.message, 'error');
-			}
+		document.getElementById('loginBtn').addEventListener('click', () => {
+			const authURL = generateAuthURL();
+			// 在新窗口打开授权链接
+			window.open(authURL, '_blank');
 		});
 
 		// 解析授权码函数
@@ -419,35 +432,21 @@
 				// 保存数据到 sessionStorage
 				sessionStorage.setItem('eatData', JSON.stringify(fetchData.data));
 
-				// 第二步：生成报告
-				const reportResponse = await fetch('/api/report/generate', {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-					},
-					body: JSON.stringify(fetchData.data),
-				});
+				// 第二步：在前端生成报告
+				const html = generateReportHTML(fetchData.data);
 
-				if (reportResponse.ok) {
-					const html = await reportResponse.text();
-
-					// 在新窗口中打开报告
-					const reportWindow = window.open('', '_blank');
-					if (reportWindow) {
-						reportWindow.document.write(html);
-						reportWindow.document.close();
-						setLoading(false);
-						showStatus('报告已在新窗口中打开！', 'success');
-						// 启用下载 JSON 按钮
-						document.getElementById('downloadJsonBtn').disabled = false;
-					} else {
-						setLoading(false);
-						showStatus('无法打开新窗口，请检查浏览器弹窗设置', 'error');
-					}
-				} else {
-					const reportData = await reportResponse.json();
+				// 在新窗口中打开报告
+				const reportWindow = window.open('', '_blank');
+				if (reportWindow) {
+					reportWindow.document.write(html);
+					reportWindow.document.close();
 					setLoading(false);
-					showStatus('生成报告失败: ' + (reportData.error || '未知错误'), 'error');
+					showStatus('报告已在新窗口中打开！', 'success');
+					// 启用下载 JSON 按钮
+					document.getElementById('downloadJsonBtn').disabled = false;
+				} else {
+					setLoading(false);
+					showStatus('无法打开新窗口，请检查浏览器弹窗设置', 'error');
 				}
 			} catch (error) {
 				setLoading(false);
@@ -496,6 +495,496 @@
 			document.getElementById('loading').classList.toggle('active', loading);
 			document.getElementById('generateReportBtn').disabled = loading;
 			document.getElementById('downloadJsonBtn').disabled = loading;
+		}
+
+		// ========== 报告生成函数（从前端生成） ==========
+
+		// 生成报告 HTML
+		function generateReportHTML(eatData) {
+			// 处理数据
+			const records = processEatData(eatData.entities);
+			if (records.length === 0) {
+				return '<html><body><h1>无有效消费记录</h1></body></html>';
+			}
+
+			// 分析数据
+			const report = analyzeData(records);
+
+			// 生成 HTML
+			return renderReportTemplate(report);
+		}
+
+		// 处理消费数据
+		function processEatData(entities) {
+			const filterPatterns = ['电瓶车', '游泳', '核减', '浴室', '教材科', '校医院', '充值'];
+			const filterRegex = new RegExp(filterPatterns.join('|'));
+			const plateRegex = /^沪[0-9A-Z]{4,7}$/i;
+
+			const records = [];
+
+			for (const e of entities) {
+				// 调整金额（取负值，保留2位小数）
+				const adjAmount = Math.round(-e.amount * 100) / 100;
+				if (adjAmount < 0) continue;
+
+				// 标准化商户名称
+				let normalizedMerchant = e.merchant.trim();
+				if (plateRegex.test(normalizedMerchant)) {
+					normalizedMerchant = '班车';
+				}
+
+				// 过滤
+				if (filterRegex.test(normalizedMerchant)) continue;
+
+				// 只保留有效时间
+				if (e.payTime === 0) continue;
+
+				records.push({
+					...e,
+					amount: adjAmount,
+					normalizedMerchant,
+				});
+			}
+
+			return records.sort((a, b) => a.payTime - b.payTime);
+		}
+
+		// 分析数据
+		function analyzeData(records) {
+			// CST 时区偏移（秒）
+			const cstOffsetSeconds = 8 * 3600;
+
+			let totalAmount = 0;
+			// 将 Unix 时间戳（秒）转换为 CST 时间
+			const firstDate = new Date((records[0].payTime + cstOffsetSeconds) * 1000);
+			const year = firstDate.getUTCFullYear();
+
+			const merchantCount = {};
+			const merchantAmount = {};
+			const monthAmount = {};
+			const hourCount = {};
+
+			let max = records[0];
+			const dayEarliest = {};
+
+			for (const r of records) {
+				// 将 Unix 时间戳（秒）转换为 CST 时间
+				const t = new Date((r.payTime + cstOffsetSeconds) * 1000);
+				totalAmount += r.amount;
+
+				merchantCount[r.normalizedMerchant] = (merchantCount[r.normalizedMerchant] || 0) + 1;
+				merchantAmount[r.normalizedMerchant] = (merchantAmount[r.normalizedMerchant] || 0) + r.amount;
+
+				const monthKey = String(t.getUTCMonth() + 1);
+				monthAmount[monthKey] = (monthAmount[monthKey] || 0) + r.amount;
+
+				const hourKey = String(t.getUTCHours());
+				hourCount[hourKey] = (hourCount[hourKey] || 0) + 1;
+
+				const dayKey = `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}-${String(t.getUTCDate()).padStart(2, '0')}`;
+				if (!dayEarliest[dayKey] || r.payTime < dayEarliest[dayKey].payTime) {
+					dayEarliest[dayKey] = r;
+				}
+
+				if (r.amount > max.amount) {
+					max = r;
+				}
+			}
+
+			// 填充缺失的月份和小时
+			for (let m = 1; m <= 12; m++) {
+				const key = String(m);
+				if (!(key in monthAmount)) {
+					monthAmount[key] = 0;
+				}
+			}
+			for (let h = 0; h < 24; h++) {
+				const key = String(h);
+				if (!(key in hourCount)) {
+					hourCount[key] = 0;
+				}
+			}
+
+			const first = records[0];
+			const firstTime = new Date((first.payTime + cstOffsetSeconds) * 1000);
+			const maxTime = new Date((max.payTime + cstOffsetSeconds) * 1000);
+
+			// 最常光顾
+			const mostFrequentLoc = maxCount(merchantCount);
+			const mostFrequentAmount = merchantAmount[mostFrequentLoc] || 0;
+
+			// 消费最多的地点
+			const mostSpentLoc = maxAmount(merchantAmount);
+			const mostSpentCount = merchantCount[mostSpentLoc] || 0;
+
+			// 早/午/晚餐次数
+			const { breakfast, lunch, dinner } = mealBuckets(records);
+
+			// 最早的一餐
+			const earliest = earliestMeal(Object.values(dayEarliest));
+			const earliestTime = new Date((earliest.payTime + cstOffsetSeconds) * 1000);
+
+			// 月度消费最高
+			const peakMonth = maxAmount(monthAmount);
+
+			return {
+				year,
+				totalAmount,
+				firstMealLocation: first.normalizedMerchant,
+				firstMealTime: formatCN(firstTime),
+				firstMealAmount: first.amount,
+				maxMealLocation: max.normalizedMerchant,
+				maxMealTime: formatCN(maxTime),
+				maxMealAmount: max.amount,
+				mostFrequentLocation: mostFrequentLoc,
+				mostFrequentCount: merchantCount[mostFrequentLoc] || 0,
+				mostFrequentAmount,
+				mostSpentLocation: mostSpentLoc,
+				mostSpentAmount: merchantAmount[mostSpentLoc] || 0,
+				mostSpentCount,
+				breakfastCount: breakfast,
+				lunchCount: lunch,
+				dinnerCount: dinner,
+				earliestMealLocation: earliest.normalizedMerchant,
+				earliestMealTime: formatCN(earliestTime),
+				earliestMealAmount: earliest.amount,
+				peakMonth: parseInt(peakMonth) || 1,
+				peakMonthAmount: monthAmount[peakMonth] || 0,
+				merchantAmount,
+				monthlyAmount: monthAmount,
+				timeDistribution: hourCount,
+			};
+		}
+
+		function maxCount(m) {
+			let maxKey = '';
+			let maxValue = 0;
+			for (const [k, v] of Object.entries(m)) {
+				if (v > maxValue) {
+					maxKey = k;
+					maxValue = v;
+				}
+			}
+			return maxKey;
+		}
+
+		function maxAmount(m) {
+			let maxKey = '';
+			let maxValue = 0;
+			for (const [k, v] of Object.entries(m)) {
+				if (v > maxValue) {
+					maxKey = k;
+					maxValue = v;
+				}
+			}
+			return maxKey;
+		}
+
+		function mealBuckets(records) {
+			const cstOffsetSeconds = 8 * 3600;
+			let breakfast = 0;
+			let lunch = 0;
+			let dinner = 0;
+
+			for (const r of records) {
+				const h = new Date((r.payTime + cstOffsetSeconds) * 1000).getUTCHours();
+				if (h >= 6 && h < 9) {
+					breakfast++;
+				} else if (h >= 11 && h < 14) {
+					lunch++;
+				} else if (h >= 17 && h < 19) {
+					dinner++;
+				}
+			}
+
+			return { breakfast, lunch, dinner };
+		}
+
+		function earliestMeal(dayEarliest) {
+			const cstOffsetSeconds = 8 * 3600;
+			let earliest = dayEarliest[0];
+			let earliestSeconds = Infinity;
+
+			for (const r of dayEarliest) {
+				const t = new Date((r.payTime + cstOffsetSeconds) * 1000);
+				const seconds = t.getUTCHours() * 3600 + t.getUTCMinutes() * 60 + t.getUTCSeconds();
+				if (seconds < earliestSeconds) {
+					earliest = r;
+					earliestSeconds = seconds;
+				}
+			}
+
+			return earliest;
+		}
+
+		function formatCN(date) {
+			const month = date.getUTCMonth() + 1;
+			const day = date.getUTCDate();
+			const hour = date.getUTCHours();
+			const minute = date.getUTCMinutes();
+			return `${month}月${day}日${hour}时${String(minute).padStart(2, '0')}分`;
+		}
+
+		// 渲染报告模板
+		function renderReportTemplate(report) {
+			const chartData = {
+				MerchantAmount: report.merchantAmount,
+				MonthlyAmount: report.monthlyAmount,
+				TimeDistribution: report.timeDistribution,
+			};
+
+			const reportJSON = JSON.stringify(chartData);
+			const year = report.year;
+			const totalAmount = report.totalAmount.toFixed(2);
+			const firstMealLocation = report.firstMealLocation;
+			const firstMealTime = report.firstMealTime;
+			const firstMealAmount = report.firstMealAmount.toFixed(2);
+			const maxMealTime = report.maxMealTime;
+			const maxMealLocation = report.maxMealLocation;
+			const maxMealAmount = report.maxMealAmount.toFixed(2);
+			const mostFrequentLocation = report.mostFrequentLocation;
+			const mostFrequentCount = report.mostFrequentCount;
+			const mostFrequentAmount = report.mostFrequentAmount.toFixed(2);
+			const mostSpentLocation = report.mostSpentLocation;
+			const mostSpentAmount = report.mostSpentAmount.toFixed(2);
+			const mostSpentCount = report.mostSpentCount;
+			const breakfastCount = report.breakfastCount;
+			const lunchCount = report.lunchCount;
+			const dinnerCount = report.dinnerCount;
+			const earliestMealLocation = report.earliestMealLocation;
+			const earliestMealTime = report.earliestMealTime;
+			const earliestMealAmount = report.earliestMealAmount.toFixed(2);
+			const peakMonth = report.peakMonth;
+			const peakMonthAmount = report.peakMonthAmount.toFixed(2);
+
+			return '<!DOCTYPE html>\n' +
+				'<html lang="zh-CN">\n' +
+				'<head>\n' +
+				'    <meta charset="UTF-8">\n' +
+				'    <meta name="viewport" content="width=device-width, initial-scale=1.0">\n' +
+				'    <title>SJTU ' + year + ' 思源码年度报告</title>\n' +
+				'    <script src="https://cdn.jsdelivr.net/npm/chart.js"><\/script>\n' +
+				'    <style>\n' +
+				'        :root {\n' +
+				'            --bg-color: #ffffff;\n' +
+				'            --text-main: #2c3e50;\n' +
+				'            --text-sub: #86868b;\n' +
+				'            --gradient-blue: linear-gradient(135deg, #a8dadc 0%, #457b9d 100%);\n' +
+				'            --gradient-red: linear-gradient(135deg, #f1a7a1 0%, #e5989b 100%);\n' +
+				'            --gradient-purple: linear-gradient(135deg, #cdb4db 0%, #af97be 100%);\n' +
+				'            --frost-bg: rgba(255, 255, 255, 0.6);\n' +
+				'        }\n' +
+				'        * { margin: 0; padding: 0; box-sizing: border-box; }\n' +
+				'        html, body { height: 100%; width: 100%; overflow: hidden; }\n' +
+				'        body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background-color: var(--bg-color); color: var(--text-main); -webkit-font-smoothing: antialiased; }\n' +
+				'        #snap-container { height: 100vh; overflow-y: scroll; scroll-snap-type: y mandatory; scroll-behavior: smooth; }\n' +
+				'        .ambient-bg { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: -1; background: radial-gradient(at 10% 10%, rgba(168, 218, 220, 0.12) 0px, transparent 50%), radial-gradient(at 90% 90%, rgba(205, 180, 219, 0.12) 0px, transparent 50%); }\n' +
+				'        section { height: 100vh; width: 100%; scroll-snap-align: start; scroll-snap-stop: always; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 40px 20px; text-align: center; }\n' +
+				'        .content { opacity: 0; transform: translateY(30px); transition: all 1s cubic-bezier(0.25, 1, 0.5, 1); max-width: 850px; width: 100%; }\n' +
+				'        section.active .content { opacity: 1; transform: translateY(0); }\n' +
+				'        .hero-data { font-size: clamp(3rem, 10vw, 5rem); font-weight: 800; margin: 0.5rem 0; line-height: 1.1; display: block; background: var(--gradient-blue); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: -2px; }\n' +
+				'        .hero-red { background: var(--gradient-red); -webkit-background-clip: text; background-clip: text; }\n' +
+				'        .hero-purple { background: var(--gradient-purple); -webkit-background-clip: text; background-clip: text; }\n' +
+				'        .title-label { font-size: 1.2rem; color: var(--text-sub); font-weight: 400; margin-bottom: 0.5rem; }\n' +
+				'        .title-label b { color: var(--text-main); font-weight: 600; }\n' +
+				'        .desc-text { font-size: 1.1rem; color: var(--text-sub); font-weight: 400; line-height: 1.8; margin-top: 10px; }\n' +
+				'        .desc-text b { color: var(--text-main); font-weight: 600; }\n' +
+				'        .sub-quote { font-size: 0.95rem; color: var(--text-sub); margin-top: 2rem; font-weight: 300; }\n' +
+				'        .dashboard-card { background: var(--frost-bg); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); border: 1px solid rgba(255, 255, 255, 0.4); border-radius: 28px; padding: 24px; box-shadow: 0 4px 30px rgba(0,0,0,0.02); width: 100%; }\n' +
+				'        .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; width: 100%; max-width: 1000px; }\n' +
+				'        .chart-full-width { grid-column: 1 / -1; }\n' +
+				'        @media (max-width: 768px) { .chart-grid { grid-template-columns: 1fr; } }\n' +
+				'        .chart-container { height: 200px; position: relative; width: 100%; }\n' +
+				'        .scroll-hint { position: absolute; bottom: 30px; animation: bounce 2.5s infinite; color: #d1d1d6; font-size: 0.75rem; letter-spacing: 3px; }\n' +
+				'        @keyframes bounce { 0%, 20%, 50%, 80%, 100% {transform: translateY(0);} 40% {transform: translateY(-8px);} 60% {transform: translateY(-4px);} }\n' +
+				'    </style>\n' +
+				'</head>\n' +
+				'<body>\n' +
+				'<div class="ambient-bg"></div>\n' +
+				'<div id="snap-container">\n' +
+				'    <section>\n' +
+				'        <div class="content">\n' +
+				'            <p class="title-label" style="letter-spacing: 2px;">SJTU ' + year + '</p>\n' +
+				'            <h1 style="font-weight: 200; font-size: 2.8rem; letter-spacing: 10px; margin-top: 10px; color: var(--text-main);">思源码年度报告</h1>\n' +
+				'            <p class="sub-quote" style="margin-top: 40px; letter-spacing: 1px;">下滑开启</p>\n' +
+				'        </div>\n' +
+				'    </section>\n' +
+				'    <section>\n' +
+				'        <div class="content">\n' +
+				'            <p class="title-label">' + year + '年，你在交大共消费了</p>\n' +
+				'            <h2 class="hero-data">¥' + totalAmount + '</h2>\n' +
+				'            <p class="desc-text">每一笔开支，都是在为向往的生活投票</p>\n' +
+				'        </div>\n' +
+				'    </section>\n' +
+				'    <section>\n' +
+				'        <div class="content">\n' +
+				'            <p class="title-label"><b>' + firstMealLocation + ' </b>在</p>\n' +
+				'            <h2 class="hero-data hero-red" style="font-size: clamp(2rem, 8vw, 4rem);">' + firstMealTime + '</h2>\n' +
+				'            <p class="desc-text">见证了你今年第一笔消费，一共花了 <b>' + firstMealAmount + ' 元</b>。<br>在交大的每一年都要有一个美好的开始。</p>\n' +
+				'        </div>\n' +
+				'    </section>\n' +
+				'    <section>\n' +
+				'        <div class="content">\n' +
+				'            <p class="title-label"><b>' + maxMealTime + '</b>，你在<b>' + maxMealLocation + ' </b>单笔最高消费了</p>\n' +
+				'            <h2 class="hero-data hero-purple">¥' + maxMealAmount + '</h2>\n' +
+				'            <p class="desc-text">哇，真是胃口大开的一顿！</p>\n' +
+				'        </div>\n' +
+				'    </section>\n' +
+				'    <section>\n' +
+				'        <div class="content">\n' +
+				'            <p class="title-label">最常光顾 <b>' + mostFrequentLocation + '</b></p>\n' +
+				'            <h2 class="hero-data">' + mostFrequentCount + ' 次</h2>\n' +
+				'            <p class="desc-text">总共花了 <b>' + mostFrequentAmount + ' 元</b>。这里的美食真是让你回味无穷。</p>\n' +
+				'        </div>\n' +
+				'    </section>\n' +
+				'    <section>\n' +
+				'        <div class="content">\n' +
+				'            <p class="title-label">你在 <b>' + mostSpentLocation + '</b> 消费最多，总计</p>\n' +
+				'            <h2 class="hero-data hero-red">¥' + mostSpentAmount + '</h2>\n' +
+				'            <p class="desc-text">这是 <b>' + mostSpentCount + '</b> 次消费积累而成。<br>想来这里一定有你钟爱的菜品。</p>\n' +
+				'        </div>\n' +
+				'    </section>\n' +
+				'    <section>\n' +
+				'        <div class="content">\n' +
+				'            <p class="title-label">这一年，你一共吃了</p>\n' +
+				'            <h2 class="hero-data hero-purple" style="font-size: clamp(1.8rem, 6vw, 3rem); letter-spacing: 0;">' + breakfastCount + ' / ' + lunchCount + ' / ' + dinnerCount + '</h2>\n' +
+				'            <p class="desc-text">顿 <b>早餐 / 午餐 / 晚餐</b> <br>在交大的每一餐都要好好吃饭～</p>\n' +
+				'        </div>\n' +
+				'    </section>\n' +
+				'    <section>\n' +
+				'        <div class="content">\n' +
+				'            <p class="title-label"><b>' + earliestMealLocation + ' </b>在</p>\n' +
+				'            <h2 class="hero-data" style="font-size: clamp(2rem, 8vw, 4rem);">' + earliestMealTime + '</h2>\n' +
+				'            <p class="desc-text">记录下来今年最早的一次用餐，花了 <b>' + earliestMealAmount + ' 元</b>。<br>令人难忘的早起！</p>\n' +
+				'        </div>\n' +
+				'    </section>\n' +
+				'    <section>\n' +
+				'        <div class="content">\n' +
+				'            <p class="title-label">你今年消费最密集的月份是</p>\n' +
+				'            <h2 class="hero-data hero-red">' + peakMonth + ' 月</h2>\n' +
+				'            <p class="desc-text">一共花了 <b>' + peakMonthAmount + ' 元</b>。<br>这个月你一定心情不错。</p>\n' +
+				'        </div>\n' +
+				'    </section>\n' +
+				'    <section style="height: auto; min-height: 100vh; padding-top: 80px;">\n' +
+				'        <div class="content" style="max-width: 1000px;">\n' +
+				'            <p class="title-label" style="letter-spacing: 2px; margin-bottom: 30px;">' + year + ' 消费看板</p>\n' +
+				'            <div class="chart-grid">\n' +
+				'                <div class="dashboard-card">\n' +
+				'                    <h3 style="font-size: 0.9rem; margin-bottom: 15px; font-weight: 500;">食堂消费分布</h3>\n' +
+				'                    <div class="chart-container"><canvas id="merchantChart"></canvas></div>\n' +
+				'                </div>\n' +
+				'                <div class="dashboard-card">\n' +
+				'                    <h3 style="font-size: 0.9rem; margin-bottom: 15px; font-weight: 500;">月度支出趋势</h3>\n' +
+				'                    <div class="chart-container"><canvas id="monthlyChart"></canvas></div>\n' +
+				'                </div>\n' +
+				'                <div class="dashboard-card chart-full-width">\n' +
+				'                    <h3 style="font-size: 0.9rem; margin-bottom: 15px; font-weight: 500;">24小时消费时间分布</h3>\n' +
+				'                    <div class="chart-container" style="height: 180px;"><canvas id="timeChart"></canvas></div>\n' +
+				'                </div>\n' +
+				'            </div>\n' +
+				'            <div style="margin-top: 50px; padding-bottom: 40px;">\n' +
+				'                <p class="sub-quote">SJTU ' + year + ' 思源码年度报告</p>\n' +
+				'            </div>\n' +
+				'        </div>\n' +
+				'    </section>\n' +
+				'</div>\n' +
+				'<script>\n' +
+				'    const REPORT_DATA = ' + reportJSON + ';\n' +
+				'    const sections = document.querySelectorAll("section");\n' +
+				'    const observer = new IntersectionObserver((entries) => {\n' +
+				'        entries.forEach(entry => {\n' +
+				'            if (entry.isIntersecting) entry.target.classList.add("active");\n' +
+				'        });\n' +
+				'    }, { threshold: 0.5 });\n' +
+				'    sections.forEach(s => observer.observe(s));\n' +
+				'    function initCharts() {\n' +
+				'        Chart.defaults.font.family = "system-ui, sans-serif";\n' +
+				'        Chart.defaults.color = "#86868b";\n' +
+				'        const months = Object.keys(REPORT_DATA.MonthlyAmount).sort((a,b)=>a-b);\n' +
+				'        const legendConfig = {\n' +
+				'            display: true,\n' +
+				'            position: "bottom",\n' +
+				'            reverse: true,\n' +
+				'            labels: {\n' +
+				'                boxWidth: 10,\n' +
+				'                padding: 15,\n' +
+				'                usePointStyle: true,\n' +
+				'                font: { size: 10 }\n' +
+				'            }\n' +
+				'        };\n' +
+				'        const merchantEntries = Object.entries(REPORT_DATA.MerchantAmount || {}).sort((a, b) => b[1] - a[1]);\n' +
+				'        const topMerchants = merchantEntries.slice(0, 5);\n' +
+				'        const otherSum = merchantEntries.slice(5).reduce((acc, [, v]) => acc + v, 0);\n' +
+				'        if (otherSum > 0) {\n' +
+				'            topMerchants.push(["其他", otherSum]);\n' +
+				'        }\n' +
+				'        const merchantLabels = topMerchants.map(([k]) => k);\n' +
+				'        const merchantValues = topMerchants.map(([, v]) => v);\n' +
+				'        new Chart(document.getElementById("merchantChart"), {\n' +
+				'            type: "doughnut",\n' +
+				'            data: {\n' +
+				'                labels: merchantLabels,\n' +
+				'                datasets: [{\n' +
+				'                    data: merchantValues,\n' +
+				'                    backgroundColor: ["#a8dadc", "#cdb4db", "#ffc8dd", "#bde0fe", "#f1a7a1", "#d3d3d3"],\n' +
+				'                    borderWidth: 0,\n' +
+				'                    hoverOffset: 10\n' +
+				'                }]\n' +
+				'            },\n' +
+				'            options: {\n' +
+				'                responsive: true,\n' +
+				'                maintainAspectRatio: false,\n' +
+				'                plugins: { legend: legendConfig },\n' +
+				'                cutout: "60%"\n' +
+				'            }\n' +
+				'        });\n' +
+				'        new Chart(document.getElementById("monthlyChart"), {\n' +
+				'            type: "bar",\n' +
+				'            data: {\n' +
+				'                labels: months.map(m => m + "月"),\n' +
+				'                datasets: [{\n' +
+				'                    label: "消费金额",\n' +
+				'                    data: months.map(m => REPORT_DATA.MonthlyAmount[m]),\n' +
+				'                    backgroundColor: "rgba(168, 218, 220, 0.6)",\n' +
+				'                    borderRadius: 4,\n' +
+				'                    barPercentage: 0.6\n' +
+				'                }]\n' +
+				'            },\n' +
+				'            options: {\n' +
+				'                responsive: true,\n' +
+				'                maintainAspectRatio: false,\n' +
+				'                scales: { y: { display: false }, x: { grid: { display: false } } },\n' +
+				'                plugins: { legend: legendConfig }\n' +
+				'            }\n' +
+				'        });\n' +
+				'        if (REPORT_DATA.TimeDistribution) {\n' +
+				'            new Chart(document.getElementById("timeChart"), {\n' +
+				'                type: "line",\n' +
+				'                data: {\n' +
+				'                    labels: Object.keys(REPORT_DATA.TimeDistribution).map(h => h + ":00"),\n' +
+				'                    datasets: [{\n' +
+				'                        label: "消费频次",\n' +
+				'                        data: Object.values(REPORT_DATA.TimeDistribution),\n' +
+				'                        borderColor: "#cdb4db",\n' +
+				'                        backgroundColor: "rgba(205, 180, 219, 0.1)",\n' +
+				'                        fill: true,\n' +
+				'                        tension: 0.4,\n' +
+				'                        pointRadius: 2\n' +
+				'                    }]\n' +
+				'                },\n' +
+				'                options: {\n' +
+				'                    responsive: true,\n' +
+				'                    maintainAspectRatio: false,\n' +
+				'                    scales: { y: { display: false }, x: { grid: { display: false } } },\n' +
+				'                    plugins: { legend: legendConfig }\n' +
+				'                }\n' +
+				'            });\n' +
+				'        }\n' +
+				'    }\n' +
+				'    window.onload = initCharts;\n' +
+				'<\/script>\n' +
+				'<\/body>\n' +
+				'<\/html>';
 		}
 	</script>
 </body>
