@@ -1,32 +1,503 @@
-<!doctype html>
-<html lang="en">
-	<head>
-		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>Hello, World!</title>
-	</head>
-	<body>
-		<h1 id="heading"></h1>
-		<p>This page comes from a static asset stored at `public/index.html` as configured in `wrangler.jsonc`.</p>
-		<button id="button" type="button">Fetch a random UUID</button>
-		<output id="random" for="button"></output>
-		<script>
-			fetch('/message')
-				.then((resp) => resp.text())
-				.then((text) => {
-					const h1 = document.getElementById('heading');
-					h1.textContent = text;
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>SJTU 思源码年度报告</title>
+	<link rel="icon" type="image/png" href="/pig2.png">
+	<style>
+		* {
+			margin: 0;
+			padding: 0;
+			box-sizing: border-box;
+		}
+
+		body {
+			font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+			min-height: 100vh;
+			padding: 20px;
+			color: #2c3e50;
+		}
+
+		.container {
+			max-width: 800px;
+			margin: 0 auto;
+			background: white;
+			border-radius: 20px;
+			padding: 40px;
+			box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+		}
+
+		h1 {
+			text-align: center;
+			margin-bottom: 30px;
+			color: #2c3e50;
+			font-size: 2rem;
+		}
+
+		.section {
+			margin-bottom: 30px;
+		}
+
+		.section h2 {
+			font-size: 1.2rem;
+			margin-bottom: 15px;
+			color: #34495e;
+		}
+
+		.form-group {
+			margin-bottom: 20px;
+		}
+
+		.input-with-button {
+			position: relative;
+			display: inline-block;
+			width: 100%;
+		}
+
+		.input-with-button input {
+			width: 100%;
+			padding-right: 45px;
+		}
+
+		.btn-paste {
+			position: absolute;
+			right: 5px;
+			top: 50%;
+			transform: translateY(-50%);
+			padding: 0;
+			width: 32px;
+			height: 32px;
+			border: none;
+			border-radius: 6px;
+			background: transparent;
+			color: #6c757d;
+			font-size: 1.1rem;
+			cursor: pointer;
+			transition: all 0.2s;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+		}
+
+		.btn-paste:hover {
+			background: #e9ecef;
+			color: #457b9d;
+		}
+
+		.btn-paste:active {
+			background: #dee2e6;
+		}
+
+		label {
+			display: block;
+			margin-bottom: 8px;
+			font-weight: 500;
+			color: #555;
+		}
+
+		input[type="date"],
+		input[type="text"] {
+			width: 100%;
+			padding: 12px;
+			border: 2px solid #e0e0e0;
+			border-radius: 8px;
+			font-size: 1rem;
+			transition: border-color 0.3s;
+		}
+
+		input[type="date"]:focus,
+		input[type="text"]:focus {
+			outline: none;
+			border-color: #457b9d;
+		}
+
+		input[type="text"].success {
+			border-color: #27ae60 !important;
+		}
+
+		input[type="text"].success:focus {
+			border-color: #27ae60 !important;
+		}
+
+		input[type="text"].error {
+			border-color: #e74c3c !important;
+		}
+
+		input[type="text"].error:focus {
+			border-color: #e74c3c !important;
+		}
+
+		.button-group {
+			display: flex;
+			gap: 10px;
+			margin-top: 20px;
+		}
+
+		button {
+			flex: 1;
+			padding: 14px 24px;
+			border: none;
+			border-radius: 8px;
+			font-size: 1rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.3s;
+		}
+
+		.btn-primary {
+			background: linear-gradient(135deg, #457b9d 0%, #a8dadc 100%);
+			color: white;
+		}
+
+		.btn-primary:hover {
+			transform: translateY(-2px);
+			box-shadow: 0 5px 15px rgba(69, 123, 157, 0.3);
+		}
+
+		.btn-primary:disabled {
+			opacity: 0.6;
+			cursor: not-allowed;
+			transform: none;
+		}
+
+		.btn-secondary {
+			background: #f0f0f0;
+			color: #2c3e50;
+		}
+
+		.btn-secondary:hover {
+			background: #e0e0e0;
+		}
+
+		.status {
+			margin-top: 20px;
+			padding: 15px;
+			border-radius: 8px;
+			background: #f8f9fa;
+			border-left: 4px solid #457b9d;
+		}
+
+		.status.error {
+			background: #fee;
+			border-left-color: #e74c3c;
+			color: #c0392b;
+		}
+
+		.status.success {
+			background: #efe;
+			border-left-color: #27ae60;
+			color: #229954;
+		}
+
+		.loading {
+			display: none;
+			text-align: center;
+			margin: 20px 0;
+		}
+
+		.loading.active {
+			display: block;
+		}
+
+		.spinner {
+			border: 4px solid #f3f3f3;
+			border-top: 4px solid #457b9d;
+			border-radius: 50%;
+			width: 40px;
+			height: 40px;
+			animation: spin 1s linear infinite;
+			margin: 0 auto;
+		}
+
+		@keyframes spin {
+			0% {
+				transform: rotate(0deg);
+			}
+
+			100% {
+				transform: rotate(360deg);
+			}
+		}
+
+
+		.info-text {
+			color: #7f8c8d;
+			font-size: 0.9rem;
+			margin-top: 10px;
+		}
+	</style>
+</head>
+
+<body>
+	<div class="container">
+		<h1>🍽️ SJTU 思源码年度报告</h1>
+
+		<div class="section">
+			<h2>1. 登录授权</h2>
+			<p class="info-text">点击下方按钮，在浏览器中打开授权链接并登录 jAccount。登录完成后，请复制浏览器地址栏中的完整链接并粘贴到下方输入框中。</p>
+			<div class="button-group">
+				<button class="btn-primary" id="loginBtn">打开授权链接</button>
+			</div>
+			<div class="form-group" style="margin-top: 15px;">
+				<label for="redirectUrl">粘贴登录后跳转的完整链接</label>
+				<div class="input-with-button">
+					<input type="text" id="redirectUrl" placeholder="https://net.sjtu.edu.cn/?code=..."
+						style="padding: 12px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 0.9rem; transition: border-color 0.3s;">
+					<button type="button" class="btn-paste" id="pasteBtn" title="粘贴">📋</button>
+				</div>
+				<div id="redirectUrlError" style="display: none; margin-top: 8px; font-size: 0.85rem; color: #e74c3c;">
+				</div>
+			</div>
+		</div>
+
+		<div class="section" id="step2" style="display: none;">
+			<h2>2. 选择时间范围</h2>
+			<div class="form-group">
+				<label for="startDate">开始日期</label>
+				<input type="date" id="startDate" required>
+			</div>
+			<div class="form-group">
+				<label for="endDate">结束日期</label>
+				<input type="date" id="endDate" required>
+			</div>
+		</div>
+
+		<div class="section" id="step3" style="display: none;">
+			<h2>3. 生成报告</h2>
+			<div class="button-group">
+				<button class="btn-primary" id="generateReportBtn" disabled>生成并查看报告</button>
+				<button class="btn-secondary" id="downloadJsonBtn" disabled>下载 JSON 数据</button>
+			</div>
+		</div>
+
+		<div id="status" class="status" style="display: none;"></div>
+		<div class="loading" id="loading">
+			<div class="spinner"></div>
+			<p style="margin-top: 10px;">处理中...</p>
+		</div>
+
+	</div>
+
+	<script>
+		// 设置默认日期（本年1月1日）
+		const today = new Date();
+		const currentYear = today.getFullYear();
+		const defaultStart = new Date(Date.UTC(currentYear, 0, 1)); // 本年1月1日
+
+		// 傻逼JS
+		document.getElementById('startDate').valueAsDate = defaultStart;
+		document.getElementById('endDate').value = today.toLocaleDateString('en-CA');
+
+		// 登录按钮 - 打开授权链接
+		document.getElementById('loginBtn').addEventListener('click', async () => {
+			try {
+				const response = await fetch('/api/auth/authorize');
+				const data = await response.json();
+				if (data.url) {
+					// 在新窗口打开授权链接
+					window.open(data.url, '_blank');
+					// showStatus('授权链接已在新窗口打开，请登录后复制完整链接并粘贴到下方输入框。', 'success');
+				} else {
+					showStatus('获取授权链接失败', 'error');
+				}
+			} catch (error) {
+				showStatus('请求失败: ' + error.message, 'error');
+			}
+		});
+
+		// 解析授权码函数
+		function parseAuthCode() {
+			const redirectUrlInput = document.getElementById('redirectUrl');
+			const errorDiv = document.getElementById('redirectUrlError');
+			const redirectUrl = redirectUrlInput.value.trim();
+
+			// 移除之前的样式
+			redirectUrlInput.classList.remove('success', 'error');
+			errorDiv.style.display = 'none';
+			errorDiv.textContent = '';
+
+			if (!redirectUrl) {
+				return;
+			}
+
+			try {
+				const url = new URL(redirectUrl);
+				const code = url.searchParams.get('code');
+				if (code) {
+					// 保存授权码到 sessionStorage
+					sessionStorage.setItem('authCode', code);
+					// 设置成功样式
+					redirectUrlInput.classList.add('success');
+					redirectUrlInput.classList.remove('error');
+					errorDiv.style.display = 'none';
+					// 显示步骤2和步骤3
+					document.getElementById('step2').style.display = 'block';
+					document.getElementById('step3').style.display = 'block';
+					document.getElementById('generateReportBtn').disabled = false;
+				} else {
+					// 设置失败样式
+					redirectUrlInput.classList.add('error');
+					redirectUrlInput.classList.remove('success');
+					errorDiv.textContent = 'URL 中未找到 code 参数，请确认复制的是完整跳转链接';
+					errorDiv.style.display = 'block';
+				}
+			} catch (error) {
+				// 设置失败样式
+				redirectUrlInput.classList.add('error');
+				redirectUrlInput.classList.remove('success');
+				errorDiv.textContent = '无法解析 URL: ' + error.message;
+				errorDiv.style.display = 'block';
+			}
+		}
+
+		// 粘贴按钮
+		document.getElementById('pasteBtn').addEventListener('click', async () => {
+			try {
+				const text = await navigator.clipboard.readText();
+				if (text) {
+					const redirectUrlInput = document.getElementById('redirectUrl');
+					redirectUrlInput.value = text;
+					// 粘贴后自动解析
+					parseAuthCode();
+				} else {
+					showStatus('剪贴板为空', 'error');
+				}
+			} catch (error) {
+				showStatus('粘贴失败，请手动粘贴: ' + error.message, 'error');
+			}
+		});
+
+		// 输入框内容变化时自动解析
+		document.getElementById('redirectUrl').addEventListener('input', () => {
+			parseAuthCode();
+		});
+
+		// 生成报告按钮（合并获取数据和生成报告）
+		document.getElementById('generateReportBtn').addEventListener('click', async () => {
+			const startDate = document.getElementById('startDate').value;
+			const endDate = document.getElementById('endDate').value;
+			const authCode = sessionStorage.getItem('authCode');
+
+			if (!authCode) {
+				showStatus('请先登录', 'error');
+				return;
+			}
+
+			if (!startDate || !endDate) {
+				showStatus('请选择时间范围', 'error');
+				return;
+			}
+
+			setLoading(true);
+			hideStatus();
+
+			try {
+				// 第一步：获取数据
+				const fetchResponse = await fetch('/api/data/fetch', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+					},
+					body: JSON.stringify({
+						code: authCode,
+						startDate,
+						endDate,
+					}),
 				});
 
-			const button = document.getElementById("button");
-			button.addEventListener("click", () => {
-				fetch('/random')
-					.then((resp) => resp.text())
-					.then((text) => {
-						const random = document.getElementById('random');
-						random.textContent = text;
-					});
-			});
-		</script>
-	</body>
+				const fetchData = await fetchResponse.json();
+
+				if (!fetchResponse.ok) {
+					setLoading(false);
+					showStatus('获取数据失败: ' + (fetchData.error || '未知错误'), 'error');
+					return;
+				}
+
+				// 保存数据到 sessionStorage
+				sessionStorage.setItem('eatData', JSON.stringify(fetchData.data));
+
+				// 第二步：生成报告
+				const reportResponse = await fetch('/api/report/generate', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+					},
+					body: JSON.stringify(fetchData.data),
+				});
+
+				if (reportResponse.ok) {
+					const html = await reportResponse.text();
+
+					// 在新窗口中打开报告
+					const reportWindow = window.open('', '_blank');
+					if (reportWindow) {
+						reportWindow.document.write(html);
+						reportWindow.document.close();
+						setLoading(false);
+						showStatus('报告已在新窗口中打开！', 'success');
+						// 启用下载 JSON 按钮
+						document.getElementById('downloadJsonBtn').disabled = false;
+					} else {
+						setLoading(false);
+						showStatus('无法打开新窗口，请检查浏览器弹窗设置', 'error');
+					}
+				} else {
+					const reportData = await reportResponse.json();
+					setLoading(false);
+					showStatus('生成报告失败: ' + (reportData.error || '未知错误'), 'error');
+				}
+			} catch (error) {
+				setLoading(false);
+				showStatus('请求失败: ' + error.message, 'error');
+			}
+		});
+
+		// 下载 JSON 数据按钮
+		document.getElementById('downloadJsonBtn').addEventListener('click', () => {
+			const eatData = sessionStorage.getItem('eatData');
+			if (!eatData) {
+				showStatus('没有可下载的数据，请先生成报告', 'error');
+				return;
+			}
+
+			try {
+				const data = JSON.parse(eatData);
+				const jsonStr = JSON.stringify(data, null, 2);
+				const blob = new Blob([jsonStr], { type: 'application/json' });
+				const url = URL.createObjectURL(blob);
+				const a = document.createElement('a');
+				a.href = url;
+				a.download = `eat-data-${new Date().toISOString().split('T')[0]}.json`;
+				document.body.appendChild(a);
+				a.click();
+				document.body.removeChild(a);
+				URL.revokeObjectURL(url);
+				showStatus('JSON 数据下载成功！', 'success');
+			} catch (error) {
+				showStatus('下载失败: ' + error.message, 'error');
+			}
+		});
+
+		function showStatus(message, type = '') {
+			const statusEl = document.getElementById('status');
+			statusEl.textContent = message;
+			statusEl.className = 'status ' + type;
+			statusEl.style.display = 'block';
+		}
+
+		function hideStatus() {
+			document.getElementById('status').style.display = 'none';
+		}
+
+		function setLoading(loading) {
+			document.getElementById('loading').classList.toggle('active', loading);
+			document.getElementById('generateReportBtn').disabled = loading;
+			document.getElementById('downloadJsonBtn').disabled = loading;
+		}
+	</script>
+</body>
+
 </html>

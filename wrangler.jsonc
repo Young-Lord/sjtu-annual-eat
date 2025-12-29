@@ -16,7 +16,13 @@
 	},
 	"observability": {
 		"enabled": true
-	}
+	},
+	"routes": [
+		{
+			"pattern": "皮革兔.爱来自世界.top/*",
+			"zone_name": "xn--rhqv03d5th68cnuv.top"
+		}
+	]
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
